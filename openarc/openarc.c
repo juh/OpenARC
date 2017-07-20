@@ -3375,6 +3375,12 @@ mlfi_eom(SMFICTX *ctx)
 		return SMFIS_TEMPFAIL;
 	}
 
+	if (conf->conf_dolog)
+	{
+		syslog(LOG_INFO, "%s: %s", afc->mctx_jobid,
+		       arc_chain_str(afc->mctx_arcmsg));
+	}
+
 	/*
 	**  Identify the filter, if requested.
 	*/
