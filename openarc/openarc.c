@@ -3377,7 +3377,8 @@ mlfi_eom(SMFICTX *ctx)
 
 	if (conf->conf_dolog)
 	{
-		syslog(LOG_INFO, "%s: %s", afc->mctx_jobid,
+		syslog(LOG_INFO, "%s: %s %s", afc->mctx_jobid,
+		       arc_get_cdomain(afc->mctx_arcmsg),
 		       arc_chain_str(afc->mctx_arcmsg));
 	}
 

@@ -2565,12 +2565,14 @@ arc_eom(ARC_MESSAGE *msg)
 	if (msg->arc_nsets == 0)
 	{
 		msg->arc_cstate = ARC_CHAIN_NONE;
+		msg->arc_cdomain = "(none)";
 	}
 	else
 	{
 		/* validate the final ARC-Message-Signature */
 		if (arc_validate_msg(msg, msg->arc_nsets) != ARC_STAT_OK)
 		{
+			msg->arc_cdomain = msg->arc_domain;
 			msg->arc_cstate = ARC_CHAIN_FAIL;
 		}
 		else
@@ -2592,6 +2594,7 @@ arc_eom(ARC_MESSAGE *msg)
 						break;
 				}
 
+				msg->arc_cdomain = arc_param_get(kvset, "d");
 				cv = arc_param_get(kvset, "cv");
 				if (!((set == 1 && strcasecmp(cv, "none") == 0) ||
 				     (set != 1 && strcasecmp(cv, "pass") == 0)))
@@ -3165,6 +3168,23 @@ arc_libfeature(ARC_LIB *lib, u_int fc)
 	if (idx > lib->arcl_flsize)
 		return FALSE;
 	return ((lib->arcl_flist[idx] & (1 << offset)) != 0);
+}
+
+/*
+**  ARC_GET_CDOMAIN -- retrieve stored chain domain for this message
+**
+**  Parameters:
+**  	msg -- ARC_MESSAGE object
+**
+**  Return value:
+**  	Pointer to string containing the last chain domain stored for
+**  	this message
+*/
+
+char *
+arc_get_cdomain(ARC_MESSAGE *msg)
+{
+	return msg->arc_cdomain;
 }
 
 /*

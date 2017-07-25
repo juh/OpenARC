@@ -516,6 +516,19 @@ extern ARC_HDRFIELD *arc_hdr_next __P((ARC_HDRFIELD *hdr));
 extern uint64_t arc_ssl_version __P((void));
 
 /*
+**  ARC_GET_CDOMAIN -- retrieve stored chain domain for this message
+**
+**  Parameters:
+**      msg -- ARC_MESSAGE object
+**
+**  Return value:
+**      Pointer to string containing the last chain domain stored for
+**      this message
+*/
+
+extern char *arc_get_cdomain __P((ARC_MESSAGE *msg));
+
+/*
 **  ARC_GET_DOMAIN -- retrieve stored domain for this message
 **
 **  Parameters:

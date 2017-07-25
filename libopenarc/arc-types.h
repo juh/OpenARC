@@ -149,6 +149,7 @@ struct arc_msghandle
 	u_char *		arc_authservid;
 	u_char *		arc_b64sig;
 	u_char *		arc_b64key;
+	u_char *		arc_cdomain;
 	void *			arc_signature;
 	int			arc_dnssec_key;
 	int			arc_signalg;
