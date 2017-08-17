@@ -877,6 +877,7 @@ arcf_mkarray(char *in)
 	int c = 0;
 	int n = 1;
 	char *p;
+	char *ctx;
 	char **out = NULL;
 
 	assert(in != NULL);
@@ -891,12 +892,9 @@ arcf_mkarray(char *in)
 	if (out == NULL)
 		return (const char **) NULL;
 
-	for (p = strtok(in, ","); p != NULL; p = strtok(NULL, ","))
-	{
-		out[c] = p;
-		c++;
-	}
-	out[c] = NULL;
+	for (p = strtok_r(in, ",", &ctx); p != NULL; p = strtok_r(NULL, ",", &ctx))
+		out[c++] = p;
+	out[n] = NULL;
 
 	return (const char **) out;
 }
