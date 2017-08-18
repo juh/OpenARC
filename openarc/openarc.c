@@ -1199,7 +1199,7 @@ arcf_config_new(void)
 **  	err -- error string (returned)
 **
 **  Return value:
-**  	TRUE iff the operation succeeded.
+**  	TRUE if the operation succeeded.
 */
 
 _Bool
@@ -1218,7 +1218,7 @@ arcf_list_load(struct conflist *list, char *path, char **err)
 	}
 
 	memset(buf, '\0', sizeof buf);
-	while (fgets(buf, sizeof buf - 1, f) != (char *) EOF)
+	while (fgets(buf, sizeof buf - 1, f) != NULL)
 	{
 		for (p = buf; *p != '\0'; p++)
 		{
@@ -1249,6 +1249,35 @@ arcf_list_load(struct conflist *list, char *path, char **err)
 	}
 
 	fclose(f);
+	return TRUE;
+}
+
+/*
+**  ARCF_ADDLIST -- add an entry to a list
+**
+**  Parameters:
+**  	list -- list to update
+**      str -- string to add
+**  	err -- error string (returned)
+**
+**  Return value:
+**  	TRUE if the operation succeeded.
+*/
+
+_Bool
+arcf_addlist(struct conflist *list, char *str, char **err)
+{
+	struct configvalue *v;
+
+	v = (struct configvalue *) malloc(sizeof(struct configvalue));
+	if (v == NULL)
+	{
+		*err = strerror(errno);
+		return FALSE;
+	}
+	v->value = str;
+
+	LIST_INSERT_HEAD(list, v, entries);
 	return TRUE;
 }
 
@@ -1518,13 +1547,26 @@ arcf_config_load(struct config *data, struct arcf_config *conf,
 		(void) config_get(data, "PeerList", &str, sizeof str);
 	if (str != NULL)
 	{
-		int status;
+		_Bool status;
 		char *dberr = NULL;
 
 		status = arcf_list_load(&conf->conf_peers, str, &dberr);
-		if (status != 0)
+		if (status != TRUE)
 		{
 			snprintf(err, errlen, "%s: arcf_loadlist(): %s",
+			         str, dberr);
+			return -1;
+		}
+	}
+	else if (!testmode)
+	{
+		_Bool status;
+		char *dberr = NULL;
+
+		status = arcf_addlist(&conf->conf_peers, "127.0.0.1", &dberr);
+		if (status != TRUE)
+		{
+			snprintf(err, errlen, "%s: arcf_addlist(): %s",
 			         str, dberr);
 			return -1;
 		}
@@ -2715,6 +2757,18 @@ mlfi_connect(SMFICTX *ctx, char *host, _SOCK_ADDR *ip)
 	else
 	{
 		conf = cc->cctx_config;
+	}
+
+	arcf_lowercase((u_char *) host);
+
+	/* if the client is on an ignored list, then ignore it */
+	if (((host != NULL && host[0] != '[') &&
+	    arcf_checkhost(&curconf->conf_peers, host)) ||
+	    (ip != NULL && arcf_checkip(&curconf->conf_peers, ip)))
+	{
+		if (curconf->conf_dolog)
+			syslog(LOG_INFO, "ignoring connection from %s", host);
+		return SMFIS_ACCEPT;
 	}
 
 	if (host != NULL)
