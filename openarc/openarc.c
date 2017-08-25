@@ -3459,6 +3459,11 @@ mlfi_eom(SMFICTX *ctx)
 				return SMFIS_TEMPFAIL;
 			}
 		}
+
+		if (conf->conf_dolog)
+		{
+			syslog(LOG_INFO, "%s: sealing message", afc->mctx_jobid);
+		}
 	}
 
 	if ((conf->conf_mode & ARC_MODE_VERIFY) != 0 &&
@@ -3486,13 +3491,13 @@ mlfi_eom(SMFICTX *ctx)
 
 			return SMFIS_TEMPFAIL;
 		}
-	}
 
-	if (conf->conf_dolog)
-	{
-		syslog(LOG_INFO, "%s: %s %s", afc->mctx_jobid,
-		       arc_get_cdomain(afc->mctx_arcmsg),
-		       arc_chain_str(afc->mctx_arcmsg));
+		if (conf->conf_dolog)
+		{
+			syslog(LOG_INFO, "%s: %s %s", afc->mctx_jobid,
+			       arc_get_cdomain(afc->mctx_arcmsg),
+			       arc_chain_str(afc->mctx_arcmsg));
+		}
 	}
 
 	/*
