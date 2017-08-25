@@ -139,14 +139,6 @@ KeyFile			/var/db/dkim/example.private
 
 # Minimum		n
 
-##  Mode [sv]
-##      default sv
-##
-##  Indicates which mode(s) of operation should be provided.  "s" means
-##  "sign", "v" means "verify".
-
-# Mode                  sv
-
 ##  OversignHeaders (string)
 ##  	default (none)
 ##
