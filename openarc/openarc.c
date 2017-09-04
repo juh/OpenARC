@@ -1204,7 +1204,7 @@ arcf_config_new(void)
 **  	err -- error string (returned)
 **
 **  Return value:
-**  	TRUE if the operation succeeded.
+**  	TRUE iff the operation succeeded.
 */
 
 _Bool
@@ -1262,11 +1262,11 @@ arcf_list_load(struct conflist *list, char *path, char **err)
 **
 **  Parameters:
 **  	list -- list to update
-**      str -- string to add
+**  	str -- string to add
 **  	err -- error string (returned)
 **
 **  Return value:
-**  	TRUE if the operation succeeded.
+**  	TRUE iff the operation succeeded.
 */
 
 _Bool
@@ -1560,14 +1560,14 @@ arcf_config_load(struct config *data, struct arcf_config *conf,
 
 	str = NULL;
 	if (data != NULL)
-		(void) config_get(data, "PeerHosts", &str, sizeof str);
+		(void) config_get(data, "PeerList", &str, sizeof str);
 	if (str != NULL)
 	{
 		_Bool status;
 		char *dberr = NULL;
 
 		status = arcf_list_load(&conf->conf_peers, str, &dberr);
-		if (status != TRUE)
+		if (!status)
 		{
 			snprintf(err, errlen, "%s: arcf_list_load(): %s",
 			         str, dberr);
@@ -1597,7 +1597,7 @@ arcf_config_load(struct config *data, struct arcf_config *conf,
 		char *dberr = NULL;
 
 		status = arcf_addlist(&conf->conf_peers, "127.0.0.1", &dberr);
-		if (status != TRUE)
+		if (!status)
 		{
 			snprintf(err, errlen, "%s: arcf_addlist(): %s",
 			         str, dberr);
