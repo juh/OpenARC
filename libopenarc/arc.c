@@ -785,6 +785,7 @@ arc_init(void)
 		return lib;
 
 	memset(lib, '\0', sizeof *lib);
+	lib->arcl_minkeysize = ARC_DEFAULT_MINKEYSIZE;
 	lib->arcl_flags = ARC_LIBFLAGS_DEFAULT;
 
 #define FEATURE_INDEX(x)	((x) / (8 * sizeof(u_int)))
@@ -918,6 +919,20 @@ arc_options(ARC_LIB *lib, int op, int arg, void *val, size_t valsz)
 			memcpy(val, &lib->arcl_fixedtime, valsz);
 		else
 			memcpy(&lib->arcl_fixedtime, val, valsz);
+
+		return ARC_STAT_OK;
+
+	  case ARC_OPTS_MINKEYSIZE:
+		if (val == NULL)
+			return ARC_STAT_INVALID;
+
+		if (valsz != sizeof lib->arcl_minkeysize)
+			return ARC_STAT_INVALID;
+
+		if (op == ARC_OP_GETOPT)
+			memcpy(val, &lib->arcl_minkeysize, valsz);
+		else
+			memcpy(&lib->arcl_minkeysize, val, valsz);
 
 		return ARC_STAT_OK;
 
@@ -2401,6 +2416,10 @@ arc_eoh_verify(ARC_MESSAGE *msg)
 	arc_canon_t hdr_canon;
 	arc_canon_t body_canon;
 
+	/* if the chain is dead, nothing to do here */
+	if (msg->arc_cstate == ARC_CHAIN_FAIL)
+		return ARC_STAT_OK;
+
 	/*
 	**  Request specific canonicalizations we want to run.
 	*/
@@ -2582,6 +2601,10 @@ arc_eoh(ARC_MESSAGE *msg)
 
 	assert(msg != NULL);
 
+	if (msg->arc_state >= ARC_STATE_EOH)
+		return ARC_STAT_INVALID;
+	msg->arc_state = ARC_STATE_EOH;
+
 	/*
 	**  Process all the header fields that make up ARC sets.
 	*/
@@ -2651,7 +2674,8 @@ arc_eoh(ARC_MESSAGE *msg)
 				arc_error(msg,
 				          "multiple ARC auth results at instance %u",
 				          n);
-				return ARC_STAT_SYNTAX;
+				msg->arc_cstate = ARC_CHAIN_FAIL;
+				break;
 			}
 
 			msg->arc_sets[n - 1].arcset_aar = arc_set_udata(set);
@@ -2663,7 +2687,8 @@ arc_eoh(ARC_MESSAGE *msg)
 				arc_error(msg,
 				          "multiple ARC signatures at instance %u",
 				          n);
-				return ARC_STAT_SYNTAX;
+				msg->arc_cstate = ARC_CHAIN_FAIL;
+				break;
 			}
 
 			msg->arc_sets[n - 1].arcset_ams = arc_set_udata(set);
@@ -2675,7 +2700,8 @@ arc_eoh(ARC_MESSAGE *msg)
 				arc_error(msg,
 				          "multiple ARC seals at instance %u",
 				          n);
-				return ARC_STAT_SYNTAX;
+				msg->arc_cstate = ARC_CHAIN_FAIL;
+				break;
 			}
 
 			msg->arc_sets[n - 1].arcset_as = arc_set_udata(set);
@@ -2693,21 +2719,21 @@ arc_eoh(ARC_MESSAGE *msg)
 			arc_error(msg,
 			          "missing or incomplete ARC set at instance %u",
 			          c);
-			return ARC_STAT_SYNTAX;
+			msg->arc_cstate = ARC_CHAIN_FAIL;
+			break;
 		}
 	}
 
-	if (msg->arc_state >= ARC_STATE_EOH)
-		return ARC_STAT_INVALID;
-	msg->arc_state = ARC_STATE_EOH;
+	/*
+	**  Always call arc_eoh_verify() because the hashes it sets up are
+	**  needed in either mode.
+	*/
 
-	if ((msg->arc_mode & ARC_MODE_VERIFY) != 0)
-	{
-		status = arc_eoh_verify(msg);
-		if (status != ARC_STAT_OK)
-			return status;
-	}
+	status = arc_eoh_verify(msg);
+	if (status != ARC_STAT_OK)
+		return status;
 
+	/* only call the signing side stuff when we're going to make a seal */
 	if ((msg->arc_mode & ARC_MODE_SIGN) != 0)
 	{
 		status = arc_eoh_sign(msg);
@@ -2732,7 +2758,8 @@ arc_eoh(ARC_MESSAGE *msg)
 		return ARC_STAT_SYNTAX;
 	}
 
-	if ((msg->arc_mode & ARC_MODE_VERIFY) != 0)
+	if ((msg->arc_mode & ARC_MODE_VERIFY) != 0 &&
+	    msg->arc_cstate != ARC_CHAIN_FAIL)
 	{
 		status = arc_canon_runheaders_seal(msg);
 		if (status != ARC_STAT_OK)
@@ -2763,13 +2790,13 @@ arc_body(ARC_MESSAGE *msg, u_char *buf, size_t len)
 	assert(msg != NULL);
 	assert(buf != NULL);
 
+	if (msg->arc_state == ARC_CHAIN_FAIL)
+		return ARC_STAT_OK;
+
 	if (msg->arc_state > ARC_STATE_BODY ||
 	    msg->arc_state < ARC_STATE_EOH)
 		return ARC_STAT_INVALID;
 	msg->arc_state = ARC_STATE_BODY;
-
-	if (msg->arc_state == ARC_CHAIN_FAIL)
-		return ARC_STAT_OK;
 
 	return arc_canon_bodychunk(msg, buf, len);
 }
@@ -2804,7 +2831,7 @@ arc_eom(ARC_MESSAGE *msg)
 		msg->arc_cstate = ARC_CHAIN_NONE;
 		msg->arc_cdomain = "(none)";
 	}
-	else
+	else if (msg->arc_cstate != ARC_CHAIN_FAIL)
 	{
 		/* validate the final ARC-Message-Signature */
 		if (arc_validate_msg(msg, msg->arc_nsets) != ARC_STAT_OK)
@@ -2966,6 +2993,16 @@ arc_getseal(ARC_MESSAGE *msg, ARC_HDRFIELD **seal, char *authservid,
 	}
 
 	keysize = RSA_size(rsa);
+	if (keysize * 8 < msg->arc_library->arcl_minkeysize)
+	{
+		arc_error(msg, "key size (%u) below minimum (%u)",
+		          keysize, msg->arc_library->arcl_minkeysize);
+		EVP_PKEY_free(pkey);
+		RSA_free(rsa);
+		BIO_free(keydata);
+		return ARC_STAT_CANTVRFY;
+	}
+
 	sigout = malloc(keysize);
 	if (sigout == NULL)
 	{
