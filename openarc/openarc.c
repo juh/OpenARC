@@ -3439,8 +3439,26 @@ mlfi_eom(SMFICTX *ctx)
 	{
 		int arfound = 0;
 
+		if (afc->mctx_tmpstr == NULL)
+		{
+			afc->mctx_tmpstr = arcf_dstring_new(BUFRSZ, 0);
+			if (afc->mctx_tmpstr == NULL)
+			{
+				if (conf->conf_dolog)
+				{
+					syslog(LOG_ERR,
+					       "arcf_dstring_new() failed");
+				}
+
+				return SMFIS_TEMPFAIL;
+			}
+		}
+		else
+		{
+			arcf_dstring_blank(afc->mctx_tmpstr);
+		}
+
 		/* assemble authentication results */
-		arcf_dstring_blank(afc->mctx_tmpstr);
 		for (c = 0; ; c++)
 		{
 			hdr = arcf_findheader(afc, AR_HEADER_NAME, c);
@@ -3620,8 +3638,7 @@ mlfi_eom(SMFICTX *ctx)
 		}
 	}
 
-	if (BITSET(ARC_MODE_VERIFY, cc->cctx_mode) &&
-	    arc_get_domain(afc->mctx_arcmsg) != NULL)
+	if (BITSET(ARC_MODE_VERIFY, cc->cctx_mode))
 	{
 		/*
  		**  Authentication-Results
@@ -3629,11 +3646,10 @@ mlfi_eom(SMFICTX *ctx)
 
 		arcf_dstring_blank(afc->mctx_tmpstr);
 		arcf_dstring_printf(afc->mctx_tmpstr,
-		                    "%s%s; arc=%s header.d=%s",
+		                    "%s%s; arc=%s",
 		                    cc->cctx_noleadspc ? " " : "",
 		                    conf->conf_authservid,
-		                    arc_chain_str(afc->mctx_arcmsg),
-		                    arc_get_domain(afc->mctx_arcmsg));
+		                    arc_chain_str(afc->mctx_arcmsg));
 		if (arcf_insheader(ctx, 1, AUTHRESULTSHDR,
 		                   arcf_dstring_get(afc->mctx_tmpstr)) != MI_SUCCESS)
 		{
