@@ -3542,6 +3542,14 @@ mlfi_eom(SMFICTX *ctx)
 
 						arc_set_cv(afc->mctx_arcmsg,
 						           cv);
+
+						continue;
+					}
+
+					if (arcf_dstring_len(afc->mctx_tmpstr) > 0)
+					{
+						arcf_dstring_cat(afc->mctx_tmpstr,
+						                 "; ");
 					}
 
 					arcf_dstring_printf(afc->mctx_tmpstr,
@@ -3578,6 +3586,15 @@ mlfi_eom(SMFICTX *ctx)
 						arcf_dstring_cat(afc->mctx_tmpstr, "; ");
 				}
 			}
+		}
+
+		/* append our chain status if verifying */
+		if (BITSET(ARC_MODE_VERIFY, cc->cctx_mode))
+		{
+			if (arcf_dstring_len(afc->mctx_tmpstr) > 0)
+				arcf_dstring_cat(afc->mctx_tmpstr, "; ");
+			arcf_dstring_printf(afc->mctx_tmpstr, "arc=%s",
+			                    arc_chain_str(afc->mctx_arcmsg));
 		}
 
 		/*
