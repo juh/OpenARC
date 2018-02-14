@@ -111,6 +111,17 @@ Names a file to be opened and read as an additional configuration file.
 Nesting is allowed to a maximum of five levels.
 
 .TP
+.I InternalHosts (dataset)
+Identifies a set of hosts that identifies clients whose connections
+should be treated as "internal" by this filter.  Messages received from
+such sources will not be verified and are instead trusted as-is; in
+particular, their Authentication-Results fields are trusted to be
+correct and authentic, meaning they will be assumed to contain the correct
+chain status when generating an outgoing seal.  See the description of
+"PeerList" for a description of the supported format.  If no set is
+provided, "127.0.0.1" is added to the list by default.
+
+.TP
 .I MilterDebug (integer)
 Sets the debug level to be requested from the milter library.  The
 default is 0.
@@ -121,7 +132,11 @@ Selects the operating mode(s) for this filter.  If the string contains
 the character "s", the filter will sign and seal messages passing through
 the filter.  If the string contains the character "v", the filter
 will do signature and seal validation of arriving messages.  The two
-can be combined.  There is no default; this must be specified.
+can be combined.  If neither is specified, the operating mode will
+be inferred on a per-connection basis based on the entries in the
+.I InternalHosts
+list; connections from internal hosts will be assigned to signing mode,
+and all others will be assigned to verify mode.
 
 .TP
 .I OversignHeaders (string)
@@ -246,7 +261,7 @@ This man page covers version @VERSION@ of
 Copyright (c) 2007, 2008, Sendmail, Inc. and its suppliers.  All rights
 reserved.
 
-Copyright (c) 2009-2016, The Trusted Domain Project.  All rights reserved.
+Copyright (c) 2009-2017, The Trusted Domain Project.  All rights reserved.
 .SH SEE ALSO
 .I openarc(8), sendmail(8)
 .P

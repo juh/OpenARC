@@ -1,7 +1,7 @@
 #                                               -*- Autoconf -*-
 # Process this file with autoconf to produce a configure script.
 #
-# Copyright (c) 2009-2016, The Trusted Domain Project.  All rights reserved.
+# Copyright (c) 2009-2017, The Trusted Domain Project.  All rights reserved.
 # 
 
 #
@@ -882,42 +882,6 @@ CPPFLAGS="$CPPFLAGS -DCONFIG_BASE=\\\"$sysconfdir\\\""
 test "x$prefix" = xNONE && prefix=$ac_default_prefix 
 SYSCONFDIR=`eval echo "$sysconfdir"`
 AC_SUBST([SYSCONFDIR])
-
-#
-# for contrib/spec/openarc.spec.in
-#
-
-installbin="no"
-specconfig=""
-specrequires=""
-specbuildrequires=""
-
-SPECBINDIR=""
-if test x"$installbin" = x"yes"
-then
-	SPECBINDIR="%{_bindir}/*"
-fi
-
-SPECCONFIGURE="$specconfig"
-
-if test x"$specrequires" = x""
-then
-	SPECREQUIRES=""
-else
-	SPECREQUIRES="Requires:$specrequires"
-fi
-
-if test x"$specbuildrequires" = x""
-then
-	SPECBUILDREQUIRES=""
-else
-	SPECBUILDREQUIRES="BuildRequires:$specbuildrequires"
-fi
-
-AC_SUBST(SPECBINDIR)
-AC_SUBST(SPECCONFIGURE)
-AC_SUBST(SPECREQUIRES)
-AC_SUBST(SPECBUILDREQUIRES)
 
 #
 # Finish up

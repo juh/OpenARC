@@ -1,5 +1,5 @@
 /*
-**  Copyright (c) 2009-2016, The Trusted Domain Project.  All rights reserved.
+**  Copyright (c) 2009-2017, The Trusted Domain Project.  All rights reserved.
 */
 
 #include "build-config.h"
@@ -138,6 +138,7 @@ struct arcf_config
 	struct config *	conf_data;		/* configuration data */
 	ARC_LIB *	conf_libopenarc;	/* shared library instance */
 	struct conflist conf_peers;		/* peers hosts */
+	struct conflist conf_internal;		/* internal hosts */
 };
 
 /*
@@ -165,6 +166,7 @@ struct connctx
 {
 	_Bool		cctx_milterv2;		/* milter v2 available */
 	_Bool		cctx_noleadspc;		/* no leading spaces */
+	unsigned int	cctx_mode;		/* operating mode */
 	char		cctx_host[ARC_MAXHOSTNAMELEN + 1];
 						/* hostname */
 	struct sockaddr_storage	cctx_ip;	/* IP info */
@@ -261,6 +263,7 @@ char myhostname[MAXHOSTNAMELEN + 1];		/* local host's name */
 #define	SUPERUSER	"root"			/* superuser name */
 
 /* MACROS */
+#define	BITSET(b, s)	(((b) & (s)) == (b))
 #define	JOBID(x)	((x) == NULL ? JOBIDUNKNOWN : (char *) (x))
 #define	TRYFREE(x)	do { \
 				if ((x) != NULL) \
@@ -1188,6 +1191,7 @@ arcf_config_new(void)
 	new->conf_safekeys = TRUE;
 
 	LIST_INIT(&new->conf_peers);
+	LIST_INIT(&new->conf_internal);
 
 	return new;
 }
@@ -1220,7 +1224,7 @@ arcf_list_load(struct conflist *list, char *path, char **err)
 	}
 
 	memset(buf, '\0', sizeof buf);
-	while (fgets(buf, sizeof buf - 1, f) != (char *) EOF)
+	while (fgets(buf, sizeof buf - 1, f) != NULL)
 	{
 		for (p = buf; *p != '\0'; p++)
 		{
@@ -1251,6 +1255,35 @@ arcf_list_load(struct conflist *list, char *path, char **err)
 	}
 
 	fclose(f);
+	return TRUE;
+}
+
+/*
+**  ARCF_ADDLIST -- add an entry to a list
+**
+**  Parameters:
+**  	list -- list to update
+**  	str -- string to add
+**  	err -- error string (returned)
+**
+**  Return value:
+**  	TRUE iff the operation succeeded.
+*/
+
+_Bool
+arcf_addlist(struct conflist *list, char *str, char **err)
+{
+	struct configvalue *v;
+
+	v = (struct configvalue *) malloc(sizeof(struct configvalue));
+	if (v == NULL)
+	{
+		*err = strerror(errno);
+		return FALSE;
+	}
+	v->value = str;
+
+	LIST_INSERT_HEAD(list, v, entries);
 	return TRUE;
 }
 
@@ -1302,6 +1335,9 @@ arcf_config_free(struct arcf_config *conf)
 
 	if (!LIST_EMPTY(&conf->conf_peers))
 		arcf_list_destroy(&conf->conf_peers);
+
+	if (!LIST_EMPTY(&conf->conf_internal))
+		arcf_list_destroy(&conf->conf_internal);
 
 	if (conf->conf_data != NULL)
 		config_free(conf->conf_data);
@@ -1365,6 +1401,7 @@ arcf_config_load(struct config *data, struct arcf_config *conf,
 	{
 		int tmpint;
 
+		str = NULL;
 		(void) config_get(data, "Mode", &str, sizeof str);
 		if (str != NULL)
 		{
@@ -1372,11 +1409,6 @@ arcf_config_load(struct config *data, struct arcf_config *conf,
 				conf->conf_mode |= ARC_MODE_SIGN;
 			if (strchr(str, 'v') != NULL)
 				conf->conf_mode |= ARC_MODE_VERIFY;
-		}
-		if (conf->conf_mode == 0)
-		{
-			strlcpy(err, "no mode selected", errlen);
-			return -1;
 		}
 
 		str = NULL;
@@ -1528,13 +1560,44 @@ arcf_config_load(struct config *data, struct arcf_config *conf,
 		(void) config_get(data, "PeerList", &str, sizeof str);
 	if (str != NULL)
 	{
-		int status;
+		_Bool status;
 		char *dberr = NULL;
 
 		status = arcf_list_load(&conf->conf_peers, str, &dberr);
+		if (!status)
+		{
+			snprintf(err, errlen, "%s: arcf_list_load(): %s",
+			         str, dberr);
+			return -1;
+		}
+	}
+
+	str = NULL;
+	if (data != NULL)
+		(void) config_get(data, "InternalHosts", &str, sizeof str);
+	if (str != NULL)
+	{
+		int status;
+		char *dberr = NULL;
+
+		status = arcf_list_load(&conf->conf_internal, str, &dberr);
 		if (status != 0)
 		{
-			snprintf(err, errlen, "%s: arcf_loadlist(): %s",
+			snprintf(err, errlen, "%s: arcf_list_load(): %s",
+			         str, dberr);
+			return -1;
+		}
+	}
+	else if (!testmode)
+	{
+		_Bool status;
+		char *dberr = NULL;
+
+		status = arcf_addlist(&conf->conf_internal, "127.0.0.1",
+		                      &dberr);
+		if (!status)
+		{
+			snprintf(err, errlen, "%s: arcf_addlist(): %s",
 			         str, dberr);
 			return -1;
 		}
@@ -2697,6 +2760,8 @@ mlfi_connect(SMFICTX *ctx, char *host, _SOCK_ADDR *ip)
 		conf = cc->cctx_config;
 	}
 
+	arcf_lowercase((u_char *) host);
+
 	if (host != NULL)
 		strlcpy(cc->cctx_host, host, sizeof cc->cctx_host);
 
@@ -2720,6 +2785,47 @@ mlfi_connect(SMFICTX *ctx, char *host, _SOCK_ADDR *ip)
 		memcpy(&cc->cctx_ip, ip, sizeof(struct sockaddr_in6));
 	}
 #endif /* AF_INET6 */
+
+	/* if the client is on the peer list, then ignore it */
+	if (((host != NULL && host[0] != '[') &&
+	     arcf_checkhost(&curconf->conf_peers, host)) ||
+	    (ip != NULL && arcf_checkip(&curconf->conf_peers, ip)))
+	{
+		if (curconf->conf_dolog)
+			syslog(LOG_INFO, "ignoring connection from %s", host);
+		return SMFIS_ACCEPT;
+	}
+
+	/* infer operating mode if not explicitly set */
+	if (curconf->conf_mode != 0)
+	{
+		cc->cctx_mode = curconf->conf_mode;
+	}
+	else
+	{
+		char *modestr;
+
+		if (((host != NULL && host[0] != '[') &&
+	    	     arcf_checkhost(&curconf->conf_internal, host)) ||
+	            (ip != NULL && arcf_checkip(&curconf->conf_internal, ip)))
+		{
+			/* internal host; assume outbound, so sign */
+			cc->cctx_mode = ARC_MODE_SIGN;
+			modestr = "sign";
+		}
+		else
+		{
+			/* non-internal host; assume inbound, so verify */
+			cc->cctx_mode = ARC_MODE_VERIFY;
+			modestr = "verify";
+		}
+
+		if (curconf->conf_dolog)
+		{
+			syslog(LOG_INFO, "assuming %s mode for host %s",
+			       modestr, cc->cctx_host);
+		}
+	}
 
 	cc->cctx_msg = NULL;
 
@@ -2995,6 +3101,7 @@ mlfi_eoh(SMFICTX *ctx)
 	_Bool originok;
 	_Bool didfrom = FALSE;
 	int c;
+	u_int mode;
 	ARC_STAT status;
 	connctx cc;
 	msgctx afc;
@@ -3084,11 +3191,14 @@ mlfi_eoh(SMFICTX *ctx)
 	}
 
 	/* run the header fields */
+	mode = conf->conf_mode;
+	if (mode == 0)
+		mode = cc->cctx_mode;
 	afc->mctx_arcmsg = arc_message(conf->conf_libopenarc,
 	                               conf->conf_canonhdr,
 	                               conf->conf_canonbody,
 	                               conf->conf_signalg,
-	                               conf->conf_mode,
+	                               mode,
 	                               &err);
 	if (afc->mctx_arcmsg == NULL)
 	{
@@ -3169,7 +3279,8 @@ mlfi_eoh(SMFICTX *ctx)
 			       afc->mctx_jobid);
 		}
 
-		return SMFIS_TEMPFAIL;
+		/* record a bad chain here, and short-circuit crypto */
+		arc_set_cv(afc->mctx_arcmsg, ARC_CHAIN_FAIL);
 	}
 
 	return SMFIS_CONTINUE;
@@ -3315,10 +3426,30 @@ mlfi_eom(SMFICTX *ctx)
 		return SMFIS_TEMPFAIL;
 	}
 
-	if ((conf->conf_mode & ARC_MODE_SIGN) != 0)
+	if (BITSET(ARC_MODE_SIGN, cc->cctx_mode))
 	{
+		int arfound = 0;
+
+		if (afc->mctx_tmpstr == NULL)
+		{
+			afc->mctx_tmpstr = arcf_dstring_new(BUFRSZ, 0);
+			if (afc->mctx_tmpstr == NULL)
+			{
+				if (conf->conf_dolog)
+				{
+					syslog(LOG_ERR,
+					       "arcf_dstring_new() failed");
+				}
+
+				return SMFIS_TEMPFAIL;
+			}
+		}
+		else
+		{
+			arcf_dstring_blank(afc->mctx_tmpstr);
+		}
+
 		/* assemble authentication results */
-		arcf_dstring_blank(afc->mctx_tmpstr);
 		for (c = 0; ; c++)
 		{
 			hdr = arcf_findheader(afc, AR_HEADER_NAME, c);
@@ -3345,9 +3476,33 @@ mlfi_eom(SMFICTX *ctx)
 
 				for (n = 0; n < ar.ares_count; n++)
 				{
-					if (ar.ares_result[n].result_method == ARES_METHOD_ARC)
+					if (ar.ares_result[n].result_method == ARES_METHOD_ARC &&
+					    BITSET(ARC_MODE_SIGN, cc->cctx_mode))
 					{
+						/*
+						**  If it's an ARC result under
+						**  our authserv-id and we're
+						**  not verifying, use that
+						**  value as the chain state.
+						*/
+
 						int cv;
+
+						arfound += 1;
+						if (arfound > 1)
+						{
+							arc_set_cv(afc->mctx_arcmsg,
+							           ARC_CHAIN_FAIL);
+
+							if (conf->conf_dolog)
+							{
+								syslog(LOG_INFO,
+								       "%s: chain state forced to \"fail\" due to multiple results present",
+								       afc->mctx_jobid);
+							}
+
+							continue;
+						}
 
 						switch (ar.ares_result[n].result_result)
 						{
@@ -3366,6 +3521,14 @@ mlfi_eom(SMFICTX *ctx)
 						    default:
 							cv = ARC_CHAIN_UNKNOWN;
 							break;
+						}
+
+						if (conf->conf_dolog)
+						{
+							syslog(LOG_INFO,
+							       "%s: chain state forced to %d due to prior result found",
+							       afc->mctx_jobid,
+							       cv);
 						}
 
 						arc_set_cv(afc->mctx_arcmsg,
@@ -3406,6 +3569,15 @@ mlfi_eom(SMFICTX *ctx)
 						arcf_dstring_cat(afc->mctx_tmpstr, "; ");
 				}
 			}
+		}
+
+		/* append our chain status if verifying */
+		if (BITSET(ARC_MODE_VERIFY, cc->cctx_mode))
+		{
+			if (arcf_dstring_len(afc->mctx_tmpstr) > 0)
+				arcf_dstring_cat(afc->mctx_tmpstr, "; ");
+			arcf_dstring_printf(afc->mctx_tmpstr, "arc=%s",
+			                    arc_chain_str(afc->mctx_arcmsg));
 		}
 
 		/*
@@ -3466,8 +3638,7 @@ mlfi_eom(SMFICTX *ctx)
 		}
 	}
 
-	if ((conf->conf_mode & ARC_MODE_VERIFY) != 0 &&
-	    arc_get_domain(afc->mctx_arcmsg) != NULL)
+	if (BITSET(ARC_MODE_VERIFY, cc->cctx_mode))
 	{
 		/*
  		**  Authentication-Results
@@ -3475,11 +3646,10 @@ mlfi_eom(SMFICTX *ctx)
 
 		arcf_dstring_blank(afc->mctx_tmpstr);
 		arcf_dstring_printf(afc->mctx_tmpstr,
-		                    "%s%s; arc=%s header.d=%s",
+		                    "%s%s; arc=%s",
 		                    cc->cctx_noleadspc ? " " : "",
 		                    conf->conf_authservid,
-		                    arc_chain_str(afc->mctx_arcmsg),
-		                    arc_get_domain(afc->mctx_arcmsg));
+		                    arc_chain_str(afc->mctx_arcmsg));
 		if (arcf_insheader(ctx, 1, AUTHRESULTSHDR,
 		                   arcf_dstring_get(afc->mctx_tmpstr)) != MI_SUCCESS)
 		{
