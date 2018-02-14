@@ -552,7 +552,7 @@ extern uint64_t arc_ssl_version __P((void));
 **      this message
 */
 
-extern char *arc_get_cdomain __P((ARC_MESSAGE *msg));
+extern u_char *arc_get_cdomain __P((ARC_MESSAGE *msg));
 
 /*
 **  ARC_GET_DOMAIN -- retrieve stored domain for this message
