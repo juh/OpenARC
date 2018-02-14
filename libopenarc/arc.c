@@ -2901,7 +2901,7 @@ arc_eom(ARC_MESSAGE *msg)
 	if (msg->arc_nsets == 0)
 	{
 		msg->arc_cstate = ARC_CHAIN_NONE;
-		msg->arc_cdomain = "(none)";
+		msg->arc_cdomain = NULL;
 	}
 	else if (msg->arc_cstate != ARC_CHAIN_FAIL)
 	{
@@ -3547,7 +3547,7 @@ arc_libfeature(ARC_LIB *lib, u_int fc)
 **  	this message
 */
 
-char *
+u_char *
 arc_get_cdomain(ARC_MESSAGE *msg)
 {
 	return msg->arc_cdomain;

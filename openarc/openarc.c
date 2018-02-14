@@ -3369,6 +3369,7 @@ mlfi_eom(SMFICTX *ctx)
 	msgctx afc;
 	char *authservid;
 	char *hostname;
+	u_char *cdomain;
 	struct arcf_config *conf;
 	ARC_HDRFIELD *seal = NULL;
 	ARC_HDRFIELD *sealhdr = NULL;
@@ -3664,9 +3665,17 @@ mlfi_eom(SMFICTX *ctx)
 
 		if (conf->conf_dolog)
 		{
-			syslog(LOG_INFO, "%s: %s %s", afc->mctx_jobid,
-			       arc_get_cdomain(afc->mctx_arcmsg),
-			       arc_chain_str(afc->mctx_arcmsg));
+			cdomain = arc_get_cdomain(afc->mctx_arcmsg);
+			if (cdomain)
+			{
+				syslog(LOG_INFO, "%s: %s %s", afc->mctx_jobid,
+				       cdomain, arc_chain_str(afc->mctx_arcmsg));
+			}
+			else
+			{
+				syslog(LOG_INFO, "%s: no ARC signature found",
+				       afc->mctx_jobid);
+			}
 		}
 	}
 
