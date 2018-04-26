@@ -3710,7 +3710,7 @@ mlfi_eom(SMFICTX *ctx)
 			if (cdomain)
 			{
 				syslog(LOG_INFO, "%s: %s %s", afc->mctx_jobid,
-				       cdomain, arc_chain_str(afc->mctx_arcmsg));
+				       cdomain, arc_chain_status_str(afc->mctx_arcmsg));
 			}
 			else
 			{
