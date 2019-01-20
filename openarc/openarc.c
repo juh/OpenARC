@@ -3386,10 +3386,13 @@ mlfi_eom(SMFICTX *ctx)
 	struct arcf_config *conf;
 	ARC_HDRFIELD *seal = NULL;
 	ARC_HDRFIELD *sealhdr = NULL;
+	const char *ipout = NULL;
+	struct sockaddr *ip;
 	Header hdr;
 	struct authres ar;
 	unsigned char header[ARC_MAXHEADER + 1];
 	u_char arcchainbuf[ARC_MAXHEADER + 1];
+	char ipbuf[ARC_MAXHOSTNAMELEN + 1];
 
 	assert(ctx != NULL);
 
@@ -3419,11 +3422,52 @@ mlfi_eom(SMFICTX *ctx)
 		}
 	}
 
+	if (afc->mctx_tmpstr == NULL)
+	{
+		afc->mctx_tmpstr = arcf_dstring_new(BUFRSZ, 0);
+		if (afc->mctx_tmpstr == NULL)
+		{
+			if (conf->conf_dolog)
+				syslog(LOG_ERR, "arcf_dstring_new() failed");
+
+			return SMFIS_TEMPFAIL;
+		}
+	}
+
 	/* get hostname; used in the X header and in new MIME boundaries */
 	hostname = arcf_getsymval(ctx, "j");
 	if (hostname == NULL)
 		hostname = HOSTUNKNOWN;
 
+	ip = (struct sockaddr *) &cc->cctx_ip;
+	memset(ipbuf, '\0', sizeof ipbuf);
+
+	switch (ip->sa_family)
+	{
+	  case AF_INET:
+	  {
+		struct sockaddr_in sin;
+
+		memcpy(&sin, ip, sizeof sin);
+		ipout = inet_ntop(ip->sa_family, &sin.sin_addr,
+		                  ipbuf, sizeof ipbuf);
+		break;
+	  }
+	
+	  case AF_INET6:
+	  {
+		struct sockaddr_in6 sin6;
+
+		memcpy(&sin6, ip, sizeof sin6);
+		ipout = inet_ntop(ip->sa_family, &sin6.sin6_addr,
+		                  ipbuf, sizeof ipbuf);
+		break;
+	  }
+
+	  default:
+		break;
+	}
+	
 	/*
 	**  Signal end-of-message to ARC.
 	*/
@@ -3445,24 +3489,7 @@ mlfi_eom(SMFICTX *ctx)
 	{
 		int arfound = 0;
 
-		if (afc->mctx_tmpstr == NULL)
-		{
-			afc->mctx_tmpstr = arcf_dstring_new(BUFRSZ, 0);
-			if (afc->mctx_tmpstr == NULL)
-			{
-				if (conf->conf_dolog)
-				{
-					syslog(LOG_ERR,
-					       "arcf_dstring_new() failed");
-				}
-
-				return SMFIS_TEMPFAIL;
-			}
-		}
-		else
-		{
-			arcf_dstring_blank(afc->mctx_tmpstr);
-		}
+		arcf_dstring_blank(afc->mctx_tmpstr);
 
 		/* assemble authentication results */
 		for (c = 0; ; c++)
@@ -3491,13 +3518,11 @@ mlfi_eom(SMFICTX *ctx)
 
 				for (n = 0; n < ar.ares_count; n++)
 				{
-					if (ar.ares_result[n].result_method == ARES_METHOD_ARC &&
-					    BITSET(ARC_MODE_SIGN, cc->cctx_mode))
+					if (ar.ares_result[n].result_method == ARES_METHOD_ARC)
 					{
 						/*
 						**  If it's an ARC result under
-						**  our authserv-id and we're
-						**  not verifying, use that
+						**  our authserv-id, use that
 						**  value as the chain state.
 						*/
 
@@ -3521,16 +3546,16 @@ mlfi_eom(SMFICTX *ctx)
 
 						switch (ar.ares_result[n].result_result)
 						{
+						    case ARES_RESULT_NONE:
+							cv = ARC_CHAIN_NONE;
+							break;
+
 						    case ARES_RESULT_PASS:
 							cv = ARC_CHAIN_PASS;
 							break;
 
 						    case ARES_RESULT_FAIL:
 							cv = ARC_CHAIN_FAIL;
-							break;
-
-						    case ARES_RESULT_NONE:
-							cv = ARC_CHAIN_NONE;
 							break;
 
 						    default:
@@ -3548,8 +3573,6 @@ mlfi_eom(SMFICTX *ctx)
 
 						arc_set_cv(afc->mctx_arcmsg,
 						           cv);
-
-						continue;
 					}
 
 					if (arcf_dstring_len(afc->mctx_tmpstr) > 0)
@@ -3581,26 +3604,14 @@ mlfi_eom(SMFICTX *ctx)
 						                    ar.ares_result[n].result_value[m]);
 					}
 
-					if (ar.ares_result[0].result_reason[0] != '\0')
+					if (ar.ares_result[n].result_reason[0] != '\0')
 					{
 						arcf_dstring_printf(afc->mctx_tmpstr,
 						                    " reason=\"%s\"",
-						                    ar.ares_result[0].result_reason);
+						                    ar.ares_result[n].result_reason);
 					}
-
-					if (n != ar.ares_count - 1)
-						arcf_dstring_cat(afc->mctx_tmpstr, "; ");
 				}
 			}
-		}
-
-		/* append our chain status if verifying */
-		if (BITSET(ARC_MODE_VERIFY, cc->cctx_mode))
-		{
-			if (arcf_dstring_len(afc->mctx_tmpstr) > 0)
-				arcf_dstring_cat(afc->mctx_tmpstr, "; ");
-			arcf_dstring_printf(afc->mctx_tmpstr, "arc=%s",
-			                    arc_chain_status_str(afc->mctx_arcmsg));
 		}
 
 		/*
@@ -3633,15 +3644,26 @@ mlfi_eom(SMFICTX *ctx)
 		     sealhdr = arc_hdr_next(sealhdr))
 		{
 			size_t len;
-			u_char *hfptr;
+			u_char *hfvdest;
 			u_char hfname[BUFRSZ + 1];
+			u_char hfvalue[BUFRSZ + 1];
 
-			hfptr = arc_hdr_name(sealhdr, &len);
 			memset(hfname, '\0', sizeof hfname);
-			strncpy(hfname, hfptr, len);
+			strlcpy(hfname, arc_hdr_name(sealhdr, &len),
+			        sizeof hfname);
+			hfname[len] = '\0';
 
-			status = arcf_insheader(ctx, 1, hfname,
-			                        arc_hdr_value(sealhdr));
+			hfvdest = hfvalue;
+			memset(hfvalue, '\0', sizeof hfvalue);
+			if (cc->cctx_noleadspc)
+			{
+				hfvalue[0] = ' ';
+				hfvdest++;
+			}
+			strlcat(hfvalue, arc_hdr_value(sealhdr),
+			        sizeof hfvalue);
+
+			status = arcf_insheader(ctx, 1, hfname, hfvalue);
 			if (status == MI_FAILURE)
 			{
 				if (conf->conf_dolog)
@@ -3666,6 +3688,7 @@ mlfi_eom(SMFICTX *ctx)
 		/*
  		**  Authentication-Results
 		*/
+
 		int arcchainlen = arc_chain_custody_str(afc->mctx_arcmsg,
 		                                        arcchainbuf,
 		                                        sizeof(arcchainbuf));
@@ -3689,8 +3712,17 @@ mlfi_eom(SMFICTX *ctx)
 		                    conf->conf_authservid,
 		                    arc_chain_status_str(afc->mctx_arcmsg));
 
+		if (ipout != NULL)
+		{
+			arcf_dstring_printf(afc->mctx_tmpstr,
+			                    " smtp.remote-ip=%s", ipout);
+		}
+
 		if (conf->conf_finalreceiver && arcchainlen > 0)
-			arcf_dstring_printf(afc->mctx_tmpstr, " arc.chain=%s", arcchainbuf);
+		{
+			arcf_dstring_printf(afc->mctx_tmpstr,
+			                    " arc.chain=%s", arcchainbuf);
+		}
 
 		if (arcf_insheader(ctx, 1, AUTHRESULTSHDR,
 		                   arcf_dstring_get(afc->mctx_tmpstr)) != MI_SUCCESS)
